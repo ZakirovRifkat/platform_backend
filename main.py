@@ -3,17 +3,22 @@ import numpy as np
 
 from typing import List, Union
 from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
+origins = ["*"]  # Разрешить все источники
 
-@app.get("/api/test/")
-def get_test(queries: list = Query()):
-    y0 = list(map(float, queries))
-    return y0
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
-@app.get("/model")
+@app.get("/model", response_model=dict)
 async def model(A: float, B: float, C: float, delta: float, initial: list = Query()):
 
     params = [A, B, C, delta]
@@ -22,7 +27,7 @@ async def model(A: float, B: float, C: float, delta: float, initial: list = Quer
     y0 = list(map(float, initial))
 
     # Время интеграции
-    T = 100
+    T = 500
     t_span = [0, T]
 
     options = {"atol": 1e-10, "rtol": 1e-10}
@@ -37,7 +42,8 @@ async def model(A: float, B: float, C: float, delta: float, initial: list = Quer
         C=1,
         inopts=options,
     )
-
+    t = t.tolist()
+    y = y.tolist()
     result = {
         "t": t,
         "y": y,
