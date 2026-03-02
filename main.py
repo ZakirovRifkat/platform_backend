@@ -1,9 +1,8 @@
-from fillipov import fillipov
 import numpy as np
-
-from typing import List, Union
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fillipov import fillipov
+
 
 app = FastAPI()
 
@@ -19,12 +18,20 @@ app.add_middleware(
 
 
 @app.get("/model", response_model=dict)
-async def model(A: float, B: float, C: float, delta: float, initial: list = Query()):
+async def model(
+    A: float,
+    B: float,
+    C: float,
+    delta: float,
+    initial: list[float] = Query(..., min_length=4, max_length=4),
+):
+    if delta == 0:
+        raise HTTPException(status_code=422, detail="delta must not be 0")
 
     params = [A, B, C, delta]
 
     # Начальные условия
-    y0 = list(map(float, initial))
+    y0 = [float(value) for value in initial]
 
     # Время интеграции
     T = 500
@@ -32,16 +39,22 @@ async def model(A: float, B: float, C: float, delta: float, initial: list = Quer
 
     options = {"atol": 1e-10, "rtol": 1e-10}
 
-    t, y, te, ye, ie, se = fillipov(
-        vfields=vectorfields,
-        jacobians=jacobians,
-        pfunction=None,
-        tspan=t_span,
-        y0=y0,
-        params=params,
-        C=1,
-        inopts=options,
-    )
+    try:
+        t, y, te, ye, ie, se = fillipov(
+            vfields=vectorfields,
+            jacobians=jacobians,
+            pfunction=None,
+            tspan=t_span,
+            y0=y0,
+            params=params,
+            C=1,
+            inopts=options,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"model calculation failed: {exc}"
+        ) from exc
+
     t = t.tolist()
     y = y.tolist()
     result = {
@@ -115,3 +128,14 @@ def vectorfields(t, y, params):
     hdir = 1
 
     return F1, F2, H, dH, h, hdir
+
+
+@app.get("/health", response_model=dict)
+async def health():
+    return {"status": "ok"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
