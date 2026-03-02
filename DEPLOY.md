@@ -1,4 +1,4 @@
-# Deploy FastAPI without Nginx (always available)
+# Deploy
 
 ## 1) Подготовка сервера (Ubuntu)
 
