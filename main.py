@@ -136,7 +136,16 @@ async def classicmodel(
             status_code=422, detail="initial must contain finite values"
         )
 
-    t_eval = np.arange(0.0, tEnd + dt * 0.5, dt, dtype=float)
+    # Build t_eval robustly against floating-point drift so every value stays within t_span.
+    steps = int(np.floor(tEnd / dt)) + 1
+    t_eval = np.arange(steps, dtype=float) * dt
+
+    # Ensure the final requested instant is included exactly when needed.
+    if t_eval.size == 0 or not np.isclose(t_eval[-1], tEnd):
+        t_eval = np.append(t_eval, tEnd)
+
+    # Hard clip as a final guard for solve_ivp contract: t_eval must be within t_span.
+    t_eval = t_eval[(t_eval >= 0.0) & (t_eval <= tEnd)]
     y0 = np.array([float(value) for value in initial], dtype=float)
 
     def rhs(_t, y):
