@@ -1,6 +1,7 @@
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from scipy.integrate import solve_ivp
 from fillipov import fillipov
 
 
@@ -17,8 +18,8 @@ app.add_middleware(
 )
 
 
-@app.get("/model", response_model=dict)
-async def model(
+@app.get("/servomodel", response_model=dict)
+async def servomodel(
     A: float,
     B: float,
     C: float,
@@ -27,6 +28,21 @@ async def model(
 ):
     if delta == 0:
         raise HTTPException(status_code=422, detail="delta must not be 0")
+
+    scalar_values = {
+        "A": A,
+        "B": B,
+        "C": C,
+        "delta": delta,
+    }
+    for name, value in scalar_values.items():
+        if not np.isfinite(value):
+            raise HTTPException(status_code=422, detail=f"{name} must be finite")
+
+    if not all(np.isfinite(value) for value in initial):
+        raise HTTPException(
+            status_code=422, detail="initial must contain finite values"
+        )
 
     params = [A, B, C, delta]
 
@@ -65,9 +81,100 @@ async def model(
     return result
 
 
+def watt_governor(variables, a, b, F0, m, J, beta, r, gamma0, x0):
+    omega, y, z = variables
+
+    return np.array(
+        [
+            y,
+            z,
+            -a * z - b * y - (F0 / (m * J)) * (beta * m * r * omega**2 - gamma0 * x0),
+        ],
+        dtype=float,
+    )
+
+
+@app.get("/classicmodel", response_model=dict)
+async def classicmodel(
+    a: float,
+    b: float,
+    F0: float,
+    m: float,
+    J: float,
+    beta: float,
+    r: float,
+    gamma0: float,
+    x0: float,
+    dt: float = Query(0.01, gt=0),
+    tEnd: float = Query(99.99, gt=0),
+    initial: list[float] = Query(..., min_length=3, max_length=3),
+):
+    if m == 0:
+        raise HTTPException(status_code=422, detail="m must not be 0")
+    if J == 0:
+        raise HTTPException(status_code=422, detail="J must not be 0")
+
+    scalar_values = {
+        "a": a,
+        "b": b,
+        "F0": F0,
+        "m": m,
+        "J": J,
+        "beta": beta,
+        "r": r,
+        "gamma0": gamma0,
+        "x0": x0,
+        "dt": dt,
+        "tEnd": tEnd,
+    }
+    for name, value in scalar_values.items():
+        if not np.isfinite(value):
+            raise HTTPException(status_code=422, detail=f"{name} must be finite")
+
+    if not all(np.isfinite(value) for value in initial):
+        raise HTTPException(
+            status_code=422, detail="initial must contain finite values"
+        )
+
+    t_eval = np.arange(0.0, tEnd + dt * 0.5, dt, dtype=float)
+    y0 = np.array([float(value) for value in initial], dtype=float)
+
+    def rhs(_t, y):
+        return watt_governor(y, a, b, F0, m, J, beta, r, gamma0, x0)
+
+    try:
+        solution = solve_ivp(
+            fun=rhs,
+            t_span=(0.0, float(tEnd)),
+            y0=y0,
+            t_eval=t_eval,
+            method="RK45",
+            rtol=1e-9,
+            atol=1e-9,
+            vectorized=False,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"classic model calculation failed: {exc}"
+        ) from exc
+
+    if not solution.success:
+        raise HTTPException(
+            status_code=500,
+            detail=f"classic model solver failed: {solution.message}",
+        )
+
+    y_scipy = solution.y.T
+
+    return {
+        "t": solution.t.tolist(),
+        "y": y_scipy.tolist(),
+    }
+
+
 def jacobians(
-    t,
-    y,
+    _t,
+    _y,
     params,
 ):
     # Распаковка параметров
